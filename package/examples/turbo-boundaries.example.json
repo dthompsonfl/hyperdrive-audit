@@ -1,0 +1,24 @@
+{
+  "boundaries": {
+    "app": {
+      "dependencies": {
+        "deny": ["unsafe"]
+      }
+    },
+    "ui": {
+      "dependencies": {
+        "deny": ["server-only", "data"]
+      }
+    },
+    "data": {
+      "dependents": {
+        "allow": ["app", "server-only"]
+      }
+    },
+    "server-only": {
+      "dependents": {
+        "deny": ["ui"]
+      }
+    }
+  }
+}

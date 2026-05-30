@@ -1,0 +1,13 @@
+{
+  "name": "edge-prisma",
+  "private": true,
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@prisma/client": "^7.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

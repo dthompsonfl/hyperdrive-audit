@@ -1,0 +1,55 @@
+name: Hyperdrive Auditor
+description: Run Hyperdrive Auditor against a TypeScript/Next/Turbo monorepo.
+author: Vantus Systems
+
+inputs:
+  root:
+    description: Repository root to audit.
+    required: false
+    default: .
+  profile:
+    description: Audit profile: balanced, strict, or ci.
+    required: false
+    default: ci
+  fail-on:
+    description: Severity threshold that fails the job.
+    required: false
+    default: high
+  package:
+    description: Package spec to install.
+    required: false
+    default: '@vantus/hyperdrive-auditor@latest'
+  sarif-output:
+    description: SARIF output path.
+    required: false
+    default: hyperdrive.sarif
+  budget-output:
+    description: Budget output path.
+    required: false
+    default: hyperdrive-budget.json
+  upload-sarif:
+    description: Upload SARIF with GitHub code scanning.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Hyperdrive Auditor
+      shell: bash
+      run: npm install -g "${{ inputs.package }}"
+    - name: Run Hyperdrive Auditor
+      shell: bash
+      run: |
+        hyperdrive-auditor \
+          --root "${{ inputs.root }}" \
+          --profile "${{ inputs.profile }}" \
+          --fail-on "${{ inputs.fail-on }}" \
+          --sarif-output "${{ inputs.sarif-output }}" \
+          --budget-output "${{ inputs.budget-output }}" \
+          --budget-fail
+    - name: Upload SARIF
+      if: always() && inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-output }}

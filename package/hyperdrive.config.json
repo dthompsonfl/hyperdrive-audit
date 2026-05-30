@@ -1,0 +1,26 @@
+{
+  "profile": "ci",
+  "failOn": "high",
+  "minSeverity": "info",
+  "ignoreRules": [
+    "missing-apps-directory",
+    "missing-packages-directory",
+    "missing-turbo-json",
+    "root-not-private",
+    "server-module-missing-server-only-marker",
+    "workspace-not-declared"
+  ],
+  "frameworks": {
+    "next": false,
+    "prisma": false,
+    "tailwind": false,
+    "turborepo": false
+  },
+  "budgets": {
+    "clientMaxModules": 0,
+    "clientMaxLines": 0,
+    "clientMaxHeavyImports": 0,
+    "maxServerReachableFromClient": 0,
+    "maxCycles": 0
+  }
+}

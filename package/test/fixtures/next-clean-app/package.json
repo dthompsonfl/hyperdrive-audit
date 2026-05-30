@@ -1,0 +1,26 @@
+{
+  "name": "clean",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"console.log(1)\"",
+    "format": "prettier . --check",
+    "audit:performance": "hyperdrive-auditor --root .",
+    "audit:performance:ci": "hyperdrive-auditor --root . --profile ci"
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  }
+}

@@ -1,0 +1,1 @@
+{"compilerOptions":{"moduleResolution":"bundler","jsx":"preserve","baseUrl":"."},"include":["app/**/*.ts","app/**/*.tsx"]}

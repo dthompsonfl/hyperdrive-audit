@@ -1,0 +1,7 @@
+{
+  "name": "cycle",
+  "private": true,
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

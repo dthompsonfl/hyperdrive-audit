@@ -1,0 +1,79 @@
+{
+  "name": "@vantus/hyperdrive-auditor",
+  "version": "8.0.1",
+  "description": "Publish-ready CLI auditor for TypeScript monorepos, Next.js 16, React 19, Prisma 7, Turborepo 2, runtime boundaries, security, dependency hygiene, SARIF, budgets, and safe fixes.",
+  "type": "module",
+  "bin": {
+    "hyperdrive-auditor": "./bin/hyperdrive-auditor.mjs"
+  },
+  "main": "./withHyperdrive.cjs",
+  "exports": {
+    ".": {
+      "import": "./withHyperdrive.mjs",
+      "require": "./withHyperdrive.cjs"
+    },
+    "./withHyperdrive": {
+      "import": "./withHyperdrive.mjs",
+      "require": "./withHyperdrive.cjs"
+    },
+    "./withHyperdrive.cjs": "./withHyperdrive.cjs",
+    "./withHyperdrive.mjs": "./withHyperdrive.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "examples",
+    "action.yml",
+    "withHyperdrive.cjs",
+    "withHyperdrive.mjs",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "audit": "node ./bin/hyperdrive-auditor.mjs",
+    "audit:json": "node ./bin/hyperdrive-auditor.mjs --format json",
+    "audit:md": "node ./bin/hyperdrive-auditor.mjs --format markdown --output hyperdrive-report.md",
+    "check": "node ./bin/hyperdrive-auditor.mjs --profile ci --fail-on high",
+    "syntax": "node --check ./bin/hyperdrive-auditor.mjs && find ./src -name '*.mjs' -print0 | xargs -0 -n1 node --check && node --check ./withHyperdrive.mjs && node --check ./withHyperdrive.cjs",
+    "test": "node ./test/run-fixtures.mjs && node ./test/wrapper-smoke.mjs && node ./test/run-init-doctor.mjs",
+    "audit:graph": "node ./bin/hyperdrive-auditor.mjs --graph-output hyperdrive-graph.json --type-report-output hyperdrive-type-report.json --fix-suggestions-output hyperdrive-fixes.json",
+    "audit:sarif": "node ./bin/hyperdrive-auditor.mjs --profile ci --sarif-output hyperdrive.sarif",
+    "audit:budgets": "node ./bin/hyperdrive-auditor.mjs --profile ci --budget-output hyperdrive-budget.json --budget-fail",
+    "fixes": "node ./bin/hyperdrive-auditor.mjs --fix-dry-run --fix-report-output hyperdrive-fix-report.json",
+    "prepack": "npm run syntax && node ./test/run-fixtures.mjs && node ./test/wrapper-smoke.mjs && node ./test/run-init-doctor.mjs",
+    "format:check": "node -e \"process.stdout.write('No formatter configured for this zero-build CLI package.\\n')\""
+  },
+  "peerDependencies": {
+    "typescript": ">=5.4.0"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "packageManager": "bun@1.2.0",
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "nextjs",
+    "react",
+    "typescript",
+    "turborepo",
+    "prisma",
+    "auditor",
+    "static-analysis",
+    "sarif",
+    "monorepo",
+    "cli"
+  ],
+  "license": "UNLICENSED",
+  "author": "Vantus Systems",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vantus-systems/hyperdrive-auditor.git"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}
