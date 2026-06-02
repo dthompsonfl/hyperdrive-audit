@@ -4,7 +4,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const VERSION = '8.0.2';
+const VERSION = '8.0.4';
 const moduleRequire = createRequire(import.meta.url);
 
 const SEVERITY_ORDER = {
@@ -499,6 +499,10 @@ class HyperdriveAuditor {
 
 
   loadTypeScript() {
+    if (process.env.HYPERDRIVE_DISABLE_TYPESCRIPT === '1') {
+      this.ts = false;
+      return null;
+    }
     if (this.ts !== null) return this.ts;
     const candidates = [];
     const rootPackagePath = join(this.root, 'package.json');
@@ -537,7 +541,10 @@ class HyperdriveAuditor {
   buildAstGraph() {
     if (!this.options.ast) return;
     const ts = this.loadTypeScript();
-    if (!ts) return;
+    if (!ts) {
+      this.buildTextImportGraph();
+      return;
+    }
 
     const nodes = new Map();
     const edges = [];
@@ -652,6 +659,97 @@ class HyperdriveAuditor {
     }
 
     this.astGraph = { nodes, edges, sourceFileCount: sourceFiles.length };
+  }
+
+
+  buildTextImportGraph() {
+    const nodes = new Map();
+    const edges = [];
+    const sourceFiles = this.files.filter((file) => {
+      const ext = extname(file);
+      if (!['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) return false;
+      if (file.endsWith('.d.ts')) return false;
+      return !/\/generated\//.test(this.rel(file));
+    });
+
+    const getLineForIndex = (content, index) => content.slice(0, Math.max(0, index)).split('\n').length;
+
+    for (const file of sourceFiles) {
+      const content = this.readFile(file);
+      const rel = this.rel(file);
+      const node = {
+        file,
+        rel,
+        directives: this.getTextDirectives(content),
+        imports: [],
+        exports: [],
+        dynamicImports: [],
+        externalImports: new Set(),
+        internalImports: new Set(),
+        typeOnlyImports: new Set(),
+        serverOnlyImports: new Set(),
+        clientOnlyImports: new Set(),
+        heavyClientImports: new Set(),
+        barrelExportCount: 0,
+        hasJsx: /<\s*[A-Za-z][\w:.]*(\s|>|\/)/.test(content),
+        usesBrowserApi: /\b(window|document|localStorage|sessionStorage|navigator|matchMedia|ResizeObserver|IntersectionObserver|MutationObserver)\b/.test(content),
+        usesServerEnv: /process\.env\.(?!NEXT_PUBLIC_)[A-Z0-9_]+/.test(content),
+        usesProcessEnv: /\bprocess\.env\b/.test(content),
+        usesReactClientHook: /\b(useState|useEffect|useLayoutEffect|useReducer|useRef|useTransition|useOptimistic|useActionState)\s*\(/.test(content),
+        usesServerActionDirective: /(^|\n)\s*['"]use server['"]\s*;?/.test(content),
+        lineCount: content.split('\n').length,
+      };
+
+      const addImport = (specifier, kind, isTypeOnly, index) => {
+        if (!specifier) return;
+        const resolved = this.resolveImportManually(file, specifier);
+        const importRecord = {
+          specifier,
+          kind,
+          typeOnly: Boolean(isTypeOnly),
+          resolvedFile: resolved?.file || null,
+          resolvedRel: resolved?.rel || null,
+          external: !resolved?.rel,
+          line: getLineForIndex(content, index),
+        };
+        node.imports.push(importRecord);
+        if (kind === 'export') node.exports.push(importRecord);
+        if (kind === 'dynamic') node.dynamicImports.push(importRecord);
+        if (isTypeOnly) node.typeOnlyImports.add(specifier);
+        if (importRecord.resolvedRel && !isTypeOnly) node.internalImports.add(importRecord.resolvedRel);
+        if (!importRecord.resolvedRel && !isTypeOnly) node.externalImports.add(specifier);
+        if (!isTypeOnly && (SERVER_ONLY_IMPORTS.includes(specifier) || NODE_EDGE_RISK_IMPORTS.includes(specifier))) node.serverOnlyImports.add(specifier);
+        if (!isTypeOnly && specifier === 'client-only') node.clientOnlyImports.add(specifier);
+        if (!isTypeOnly && HEAVY_CLIENT_IMPORTS.some((heavy) => specifier === heavy || specifier.startsWith(`${heavy}/`))) node.heavyClientImports.add(specifier);
+        edges.push({ from: rel, to: importRecord.resolvedRel || specifier, specifier, typeOnly: Boolean(isTypeOnly), external: !importRecord.resolvedRel, kind, line: importRecord.line });
+      };
+
+      const patterns = [
+        { kind: 'static', regex: /\bimport\s+(type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g },
+        { kind: 'export', regex: /\bexport\s+(type\s+)?(?:\*|\{[\s\S]*?\})\s+from\s+['"]([^'"]+)['"]/g },
+        { kind: 'require', regex: /\b(?:require|module\.require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g },
+        { kind: 'dynamic', regex: /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g },
+      ];
+
+      for (const pattern of patterns) {
+        let match;
+        while ((match = pattern.regex.exec(content))) {
+          if (pattern.kind === 'static' || pattern.kind === 'export') addImport(match[2], pattern.kind, Boolean(match[1]), match.index);
+          else addImport(match[1], pattern.kind, false, match.index);
+        }
+      }
+
+      nodes.set(rel, node);
+    }
+
+    this.astGraph = { nodes, edges, sourceFileCount: sourceFiles.length, fallback: true };
+  }
+
+  getTextDirectives(content) {
+    const directives = new Set();
+    const prefix = content.slice(0, 500);
+    for (const match of prefix.matchAll(/^\s*['"](use client|use server|use cache)['"]\s*;?/gm)) directives.add(match[1]);
+    return directives;
   }
 
   getScriptKind(ts, file) {

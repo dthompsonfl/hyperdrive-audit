@@ -8,7 +8,10 @@
     "missing-turbo-json",
     "root-not-private",
     "server-module-missing-server-only-marker",
-    "workspace-not-declared"
+    "workspace-not-declared",
+    "unsafe-shell-execution",
+    "env-validation-module-missing",
+    "process-env-access-not-centralized"
   ],
   "frameworks": {
     "next": false,

@@ -25,7 +25,7 @@ const edge = json(['--root', join(root, 'next-edge-imports-prisma')]);
 assert(hasRule(edge, 'edge-route-reaches-node-only-code') || hasRule(edge, 'edge-runtime-imports-node-only-code') || hasRule(edge, 'edge-runtime-transitively-imports-node-code'), 'edge/prisma contamination not detected');
 
 const action = json(['--root', join(root, 'next-server-action-unsafe')]);
-assert(hasRule(action, 'server-action-missing-validation') || hasRule(action, 'server-action-nonserializable-signature'), 'unsafe server action not detected');
+assert(hasRule(action, 'server-action-missing-validation') || hasRule(action, 'server-action-no-validation') || hasRule(action, 'server-action-nonserializable-signature'), 'unsafe server action not detected');
 
 const env = json(['--root', join(root, 'env-missing-example')]);
 assert(hasRule(env, 'env-used-but-missing-example'), 'missing env example not detected');

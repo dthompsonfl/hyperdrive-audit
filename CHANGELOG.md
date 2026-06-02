@@ -1,6 +1,6 @@
 # Changelog
 
-## 8.0.2 - Unreleased
+## 8.0.4 - Unreleased
 
 - Added interactive guided mode when `hyperdrive-auditor` is run without arguments in a terminal.
 - Added `hyperdrive-auditor guide` and `--guided` entry points.

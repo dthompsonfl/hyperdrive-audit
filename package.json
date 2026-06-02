@@ -1,6 +1,6 @@
 {
   "name": "@vantus/hyperdrive-auditor",
-  "version": "8.0.2",
+  "version": "8.0.4",
   "description": "Guided, publish-ready CLI auditor for TypeScript monorepos, Next.js 16, React 19, Prisma 7, Turborepo 2, runtime boundaries, security, dependency hygiene, SARIF, budgets, and safe fixes.",
   "type": "module",
   "bin": {
@@ -75,5 +75,8 @@
   },
   "publishConfig": {
     "access": "restricted"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
   }
 }

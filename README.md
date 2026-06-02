@@ -222,3 +222,13 @@ npm publish --access restricted
 ```
 
 Change `publishConfig.access` to `public` if publishing to the public npm registry.
+
+## Local tarball install warning
+
+When testing a packed tarball from a local clone, always prefix relative paths with `./` or use an absolute path.
+
+```bash
+npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz
+```
+
+Do not run `npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz`; npm may treat that as a GitHub shorthand package spec instead of a local file.
