@@ -4,7 +4,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const VERSION = '8.0.4';
+const VERSION = '8.0.5';
 const moduleRequire = createRequire(import.meta.url);
 
 const SEVERITY_ORDER = {
@@ -17,6 +17,16 @@ const SEVERITY_ORDER = {
 
 const DEFAULT_IGNORES = new Set([
   '.git',
+  '.hg',
+  '.svn',
+  '.cache',
+  '.parcel-cache',
+  '.vite',
+  '.vercel',
+  '.netlify',
+  '.wrangler',
+  '.sst',
+  '.serverless',
   '.hyperdrive',
   '.hyperdrive-codemod-backups',
   '.next',
@@ -26,7 +36,14 @@ const DEFAULT_IGNORES = new Set([
   'coverage',
   'dist',
   'build',
+  'out',
+  'tmp',
+  'temp',
+  'logs',
   'node_modules',
+  'vendor',
+  'public/uploads',
+  'storage',
   'playwright-report',
   'storybook-static',
   'examples',
@@ -34,7 +51,14 @@ const DEFAULT_IGNORES = new Set([
   'tests',
   'fixtures',
   '__fixtures__',
+  'hyperdrive-audit',
+  'hyperdrive-auditor',
 ]);
+
+const DEFAULT_MAX_INDEXED_FILES = 25000;
+const DEFAULT_MAX_TYPE_AWARE_FILES = 1200;
+const DEFAULT_MAX_TEXT_CACHE_BYTES = 32 * 1024 * 1024;
+const DEFAULT_MAX_TEXT_CACHE_ENTRY_BYTES = 128 * 1024;
 
 const TEXT_EXTENSIONS = new Set([
   '.js',
@@ -141,6 +165,9 @@ function parseArgs(argv) {
     failOn: 'high',
     minSeverity: 'info',
     maxFileSizeKb: 768,
+    maxIndexedFiles: DEFAULT_MAX_INDEXED_FILES,
+    maxTypeAwareFiles: DEFAULT_MAX_TYPE_AWARE_FILES,
+    maxTextCacheBytes: DEFAULT_MAX_TEXT_CACHE_BYTES,
     include: [],
     exclude: [],
     strict: false,
@@ -192,6 +219,15 @@ function parseArgs(argv) {
         break;
       case '--max-file-size-kb':
         options.maxFileSizeKb = Number(argv[++index] || options.maxFileSizeKb);
+        break;
+      case '--max-indexed-files':
+        options.maxIndexedFiles = Number(argv[++index] || options.maxIndexedFiles);
+        break;
+      case '--max-type-aware-files':
+        options.maxTypeAwareFiles = Number(argv[++index] || options.maxTypeAwareFiles);
+        break;
+      case '--max-text-cache-mb':
+        options.maxTextCacheBytes = Number(argv[++index] || 32) * 1024 * 1024;
         break;
       case '--include':
         options.include.push(argv[++index] || '');
@@ -389,6 +425,8 @@ class HyperdriveAuditor {
     this.findings = [];
     this.jsonCache = new Map();
     this.textCache = new Map();
+    this.textCacheBytes = 0;
+    this.indexLimitHit = false;
     this.packageIndex = [];
     this.workspacePackages = [];
     this.ts = null;
@@ -441,7 +479,18 @@ class HyperdriveAuditor {
     }
   }
 
+  shouldIgnorePath(rel) {
+    const normalized = rel.replaceAll('\\', '/');
+    const segments = normalized.split('/').filter(Boolean);
+    if (segments.some((segment) => DEFAULT_IGNORES.has(segment))) return true;
+    if (/^(.+\/)?(hyperdrive-report\.md|hyperdrive-graph\.json|hyperdrive-type-report\.json|hyperdrive-fixes\.json|hyperdrive-budget\.json|hyperdrive-fix-report\.json|hyperdrive\.sarif)$/.test(normalized)) return true;
+    if (/\.(tgz|tar|zip|gz|br|xz|7z|png|jpe?g|gif|webp|avif|ico|pdf|map)$/i.test(normalized)) return true;
+    if (/^(public|static|assets)\/(uploads|media|images|fonts)\//.test(normalized)) return true;
+    return false;
+  }
+
   indexFiles(dir) {
+    if (this.indexLimitHit) return;
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -450,18 +499,35 @@ class HyperdriveAuditor {
     }
 
     for (const entry of entries) {
+      if (this.indexLimitHit) return;
       if (DEFAULT_IGNORES.has(entry.name)) continue;
       if (entry.name.startsWith('.') && DEFAULT_IGNORES.has(entry.name)) continue;
 
       const fullPath = join(dir, entry.name);
       const rel = this.rel(fullPath);
+      const normalizedRel = rel.replaceAll('\\', '/');
 
-      if (this.options.exclude.some((fragment) => fragment && rel.includes(fragment))) continue;
-      if (this.options.include.length > 0 && !this.options.include.some((fragment) => rel.includes(fragment))) continue;
+      if (this.shouldIgnorePath(normalizedRel)) continue;
+      if (this.options.exclude.some((fragment) => fragment && normalizedRel.includes(fragment))) continue;
+      if (this.options.ignoreFiles?.some?.((fragment) => fragment && normalizedRel.includes(fragment))) continue;
+      if (this.options.include.length > 0 && !this.options.include.some((fragment) => normalizedRel.includes(fragment))) continue;
 
       if (entry.isDirectory()) {
         this.indexFiles(fullPath);
         continue;
+      }
+
+      if (this.files.length >= Number(this.options.maxIndexedFiles || DEFAULT_MAX_INDEXED_FILES)) {
+        this.indexLimitHit = true;
+        this.add({
+          severity: 'medium',
+          category: 'repository',
+          rule: 'index-file-limit-reached',
+          file: normalizedRel,
+          message: `Stopped indexing after ${this.files.length} files to prevent excessive memory usage.`,
+          fix: 'Add generated/vendor directories to hyperdrive.config.json exclude, or raise --max-indexed-files for intentional large audits.',
+        });
+        return;
       }
 
       const extension = extname(entry.name);
@@ -849,6 +915,30 @@ class HyperdriveAuditor {
 
   buildTypeAwareGraph() {
     if (!this.options.ast || !this.options.typeAware || !this.astGraph) return;
+    const analyzableCount = this.files.filter((file) => this.isAnalyzableTsProgramFile(file)).length;
+    const typeAwareLimit = Number(this.options.maxTypeAwareFiles || DEFAULT_MAX_TYPE_AWARE_FILES);
+    if (analyzableCount > typeAwareLimit) {
+      this.add({
+        severity: 'low',
+        category: 'typescript',
+        rule: 'type-aware-analysis-skipped-large-repo',
+        message: `Skipped TypeChecker analysis for ${analyzableCount} files to avoid excessive memory use. AST import graph analysis still ran.`,
+        fix: 'Run with --include for a smaller workspace slice, raise --max-type-aware-files, or use --no-type-aware intentionally in very large repositories.',
+      });
+      this.typeGraph = {
+        nodes: new Map(),
+        componentDeclarations: new Map(),
+        diagnostics: [],
+        programCount: 0,
+        analyzedFileCount: 0,
+        skipped: true,
+        reason: 'large-repo',
+        analyzableCount,
+        limit: typeAwareLimit,
+      };
+      return;
+    }
+
     const ts = this.loadTypeScript();
     if (!ts) return;
 
@@ -919,8 +1009,20 @@ class HyperdriveAuditor {
           noEmit: true,
           skipLibCheck: true,
         }, configFile);
-        const rootNames = parsed.fileNames.filter((file) => this.isAnalyzableTsProgramFile(file));
+        let rootNames = parsed.fileNames.filter((file) => this.isAnalyzableTsProgramFile(file));
         if (rootNames.length === 0) continue;
+        const perProgramLimit = Number(this.options.maxTypeAwareFiles || DEFAULT_MAX_TYPE_AWARE_FILES);
+        if (rootNames.length > perProgramLimit) {
+          this.add({
+            severity: 'low',
+            category: 'typescript',
+            rule: 'ts-program-file-limit-reached',
+            file: this.rel(configFile),
+            message: `Skipped TypeChecker program with ${rootNames.length} files to prevent excessive memory usage.`,
+            fix: 'Narrow tsconfig include/exclude patterns or raise --max-type-aware-files for dedicated deep analysis runs.',
+          });
+          continue;
+        }
         const options = {
           ...parsed.options,
           allowJs: parsed.options.allowJs ?? true,
@@ -952,6 +1054,17 @@ class HyperdriveAuditor {
       .filter((file) => !usedSourceFiles.has(normalizeFileName(file)));
 
     if (leftover.length > 0) {
+      const fallbackLimit = Number(this.options.maxTypeAwareFiles || DEFAULT_MAX_TYPE_AWARE_FILES);
+      if (leftover.length > fallbackLimit) {
+        this.add({
+          severity: 'low',
+          category: 'typescript',
+          rule: 'fallback-ts-program-skipped-large-repo',
+          message: `Skipped fallback TypeScript Program for ${leftover.length} files to prevent excessive memory usage.`,
+          fix: 'Add focused tsconfig.json files or run Hyperdrive with --include for a smaller workspace slice.',
+        });
+        return entries;
+      }
       try {
         const fallbackOptions = {
           allowJs: true,
@@ -981,6 +1094,7 @@ class HyperdriveAuditor {
 
   isAnalyzableTsProgramFile(file) {
     const rel = this.rel(file);
+    if (this.shouldIgnorePath(rel)) return false;
     if (/\/(node_modules|\.next|\.turbo|dist|build|coverage)\//.test(`/${rel}`)) return false;
     if (file.endsWith('.d.ts')) return false;
     return ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(extname(file));
@@ -3576,7 +3690,13 @@ class HyperdriveAuditor {
     if (this.textCache.has(fullPath)) return this.textCache.get(fullPath);
     try {
       const content = readFileSync(fullPath, 'utf8');
-      this.textCache.set(fullPath, content);
+      const bytes = Buffer.byteLength(content, 'utf8');
+      const maxEntry = DEFAULT_MAX_TEXT_CACHE_ENTRY_BYTES;
+      const maxTotal = Number(this.options.maxTextCacheBytes || DEFAULT_MAX_TEXT_CACHE_BYTES);
+      if (bytes <= maxEntry && this.textCacheBytes + bytes <= maxTotal) {
+        this.textCache.set(fullPath, content);
+        this.textCacheBytes += bytes;
+      }
       return content;
     } catch {
       return '';

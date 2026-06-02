@@ -228,7 +228,36 @@ Change `publishConfig.access` to `public` if publishing to the public npm regist
 When testing a packed tarball from a local clone, always prefix relative paths with `./` or use an absolute path.
 
 ```bash
-npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz
+npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz
 ```
 
-Do not run `npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz`; npm may treat that as a GitHub shorthand package spec instead of a local file.
+Do not run `npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz`; npm may treat that as a GitHub shorthand package spec instead of a local file.
+
+## Large repository memory guardrails
+
+Hyperdrive defaults are tuned to avoid Node heap exhaustion on very large monorepos. The auditor always skips common generated and vendored folders such as `node_modules`, `.next`, `.turbo`, `dist`, `build`, `coverage`, upload/media folders, local Hyperdrive clones, archives, and generated Hyperdrive reports.
+
+Type-aware analysis is intentionally adaptive. When the source tree exceeds the default TypeChecker threshold, Hyperdrive skips full TypeScript `Program` analysis and keeps the lower-memory AST/text import graph active. This prevents out-of-memory failures while still producing useful architecture, dependency, security, and runtime-boundary findings.
+
+Useful controls:
+
+```bash
+hyperdrive-auditor --root . --no-type-aware
+hyperdrive-auditor --root . --max-type-aware-files 2500
+hyperdrive-auditor --root . --max-indexed-files 50000
+hyperdrive-auditor --root . --max-text-cache-mb 64
+hyperdrive-auditor --root . --exclude legacy-generated --exclude public/uploads
+```
+
+For CI on very large repositories, start with:
+
+```bash
+hyperdrive-auditor --root . --profile ci --fail-on high --max-type-aware-files 1200
+```
+
+For deep type-aware audits, run focused slices:
+
+```bash
+hyperdrive-auditor --root . --include apps/web --max-type-aware-files 5000
+hyperdrive-auditor --root . --include packages/db --max-type-aware-files 3000
+```

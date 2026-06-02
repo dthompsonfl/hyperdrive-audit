@@ -1,6 +1,12 @@
 # Changelog
 
-## 8.0.4 - Unreleased
+## 8.0.5 - Unreleased
+
+- Added large-repository memory guardrails to prevent TypeScript TypeChecker OOM failures on host monorepos.
+- Added adaptive TypeChecker skipping above the default file threshold while keeping AST/text import graph analysis enabled.
+- Added hard-default ignores for vendored Hyperdrive clones, build artifacts, cache folders, upload folders, archives, source maps, and generated reports.
+- Added bounded text-file caching to prevent large source trees from exhausting the Node heap.
+- Added CLI options for `--max-indexed-files`, `--max-type-aware-files`, and `--max-text-cache-mb`.
 
 - Added interactive guided mode when `hyperdrive-auditor` is run without arguments in a terminal.
 - Added `hyperdrive-auditor guide` and `--guided` entry points.

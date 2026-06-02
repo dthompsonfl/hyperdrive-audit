@@ -47,7 +47,7 @@ npx hyperdrive-auditor doctor --root .
 ## Install from the packed tarball for testing
 
 ```bash
-npm install -D ./npm/vantus-hyperdrive-auditor-8.0.4.tgz
+npm install -D ./npm/vantus-hyperdrive-auditor-8.0.5.tgz
 npx hyperdrive-auditor init --ci github --sarif --budgets
 npx hyperdrive-auditor doctor --root .
 ```
@@ -59,19 +59,19 @@ If you are installing from a tarball path, the path must start with `./` or be a
 Correct from the host repo root:
 
 ```bash
-npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz
+npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz
 ```
 
 Correct if using the tarball under this repo's `npm/` directory:
 
 ```bash
-npm install -D ./hyperdrive-audit/npm/vantus-hyperdrive-auditor-8.0.4.tgz
+npm install -D ./hyperdrive-audit/npm/vantus-hyperdrive-auditor-8.0.5.tgz
 ```
 
 Incorrect:
 
 ```bash
-npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz
+npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz
 ```
 
-Without `./`, npm can treat `hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz` as a GitHub shorthand dependency and attempt to fetch `git@github.com:hyperdrive-audit/vantus-hyperdrive-auditor-8.0.4.tgz.git`.
+Without `./`, npm can treat `hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz` as a GitHub shorthand dependency and attempt to fetch `git@github.com:hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz.git`.
