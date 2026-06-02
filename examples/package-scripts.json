@@ -1,9 +1,13 @@
 {
-  "audit:performance": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --profile balanced",
-  "audit:performance:ci": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --profile ci --fail-on high",
-  "audit:performance:md": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --profile ci --format markdown --output hyperdrive-report.md",
-  "audit:performance:graph": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --profile ci --graph-output hyperdrive-graph.json --type-report-output hyperdrive-type-report.json --fix-suggestions-output hyperdrive-fixes.json",
-  "audit:performance:sarif": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --profile ci --sarif-output hyperdrive.sarif",
-  "audit:performance:budgets": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --profile ci --budget-output hyperdrive-budget.json --budget-fail",
-  "audit:performance:fixes": "bun --filter @your-org/hyperdrive-auditor audit -- --root . --fix-dry-run --fix-report-output hyperdrive-fix-report.json"
+  "audit:performance": "hyperdrive-auditor audit --root . --profile balanced",
+  "audit:performance:ci": "hyperdrive-auditor audit --root . --profile ci --fail-on high",
+  "audit:performance:critical": "hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --fast --no-fail",
+  "audit:performance:md": "hyperdrive-auditor audit --root . --profile ci --format markdown --output hyperdrive-report.md",
+  "audit:performance:graph": "hyperdrive-auditor audit --root . --profile ci --graph-output hyperdrive-graph.json --type-report-output hyperdrive-type-report.json --fix-suggestions-output hyperdrive-fixes.json",
+  "audit:performance:hotspots": "hyperdrive-auditor audit --root . --profile ci --hotspots-output hyperdrive-hotspots.json --action-plan-output hyperdrive-critical-plan.json --no-fail",
+  "audit:performance:sarif": "hyperdrive-auditor audit --root . --profile ci --sarif-output hyperdrive.sarif",
+  "audit:performance:budgets": "hyperdrive-auditor audit --root . --profile ci --budget-output hyperdrive-budget.json --budget-fail",
+  "audit:performance:baseline": "hyperdrive-auditor audit --root . --profile ci --write-baseline hyperdrive-baseline.json --no-fail",
+  "audit:performance:new": "hyperdrive-auditor audit --root . --profile ci --baseline hyperdrive-baseline.json --fail-on-new --fail-on high",
+  "audit:performance:fixes": "hyperdrive-auditor fix --root . --fix-dry-run --fix-report-output hyperdrive-fix-report.json --no-fail"
 }

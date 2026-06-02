@@ -1,6 +1,26 @@
+
+## 8.0.7 - Critical UX, baseline adoption, and large-repo workflow
+
+- Added baseline adoption mode with `--write-baseline`, `--baseline`, `--fail-on-new`, and `--new-only` so teams can ratchet quality without blocking on legacy debt.
+- Added `--action-plan-output` / `--critical-plan-output` to generate prioritized critical remediation workstreams from hotspot analysis.
+- Added `--fast` / `--quick` for low-memory, shallow graph feedback on very large repos.
+- Added audit stage timings to JSON reports for performance diagnosis.
+- Improved critical triage with workstreams, commands, and clearer remediation sequencing for client/server boundary, env leak, Prisma, and shared-runtime failures.
+- Optimized finding storage when `--min-severity` is used so critical-only runs do not keep low-severity noise in memory.
+
+
+## 8.0.7 - Critical Triage and Large Graph Performance
+
+- Added critical root-cause triage for repeated client/server boundary findings.
+- Added grouped hotspot JSON output with `--hotspots-output`.
+- Added `--critical-only`, `--summary-only`, `--all-findings`, `--max-findings-per-severity`, and `--max-graph-depth`.
+- Capped pretty output by default so CI logs stay readable on very large repos.
+- Memoized runtime graph reachability and replaced repeated queue shifting with indexed traversal for faster large-codebase scans.
+- Added critical insights to JSON and Markdown reports.
+
 # Changelog
 
-## 8.0.5 - Unreleased
+## 8.0.7 - Unreleased
 
 - Added large-repository memory guardrails to prevent TypeScript TypeChecker OOM failures on host monorepos.
 - Added adaptive TypeChecker skipping above the default file threshold while keeping AST/text import graph analysis enabled.

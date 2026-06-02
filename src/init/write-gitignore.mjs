@@ -7,6 +7,10 @@ export const HYPERDRIVE_GITIGNORE_PATTERNS = [
   'hyperdrive-type-report.json',
   'hyperdrive-fixes.json',
   'hyperdrive-budget.json',
+  'hyperdrive-hotspots.json',
+  'hyperdrive-critical-plan.json',
+  'hyperdrive-baseline.json',
+  'hyperdrive-new-findings.md',
   'hyperdrive-fix-report.json',
   'hyperdrive.sarif',
   '.hyperdrive-codemod-backups/'

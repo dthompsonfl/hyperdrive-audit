@@ -27,6 +27,26 @@ inputs:
     description: Budget output path.
     required: false
     default: hyperdrive-budget.json
+  hotspots-output:
+    description: Critical hotspot output path.
+    required: false
+    default: hyperdrive-hotspots.json
+  action-plan-output:
+    description: Critical remediation plan output path.
+    required: false
+    default: hyperdrive-critical-plan.json
+  baseline:
+    description: Optional baseline JSON path. When provided, the action fails only on new findings when fail-on-new is true.
+    required: false
+    default: ''
+  fail-on-new:
+    description: Fail only on findings not present in the baseline.
+    required: false
+    default: 'false'
+  fast:
+    description: Use fast mode for large repos.
+    required: false
+    default: 'false'
   upload-sarif:
     description: Upload SARIF with GitHub code scanning.
     required: false
@@ -41,13 +61,21 @@ runs:
     - name: Run Hyperdrive Auditor
       shell: bash
       run: |
-        hyperdrive-auditor \
-          --root "${{ inputs.root }}" \
-          --profile "${{ inputs.profile }}" \
-          --fail-on "${{ inputs.fail-on }}" \
-          --sarif-output "${{ inputs.sarif-output }}" \
-          --budget-output "${{ inputs.budget-output }}" \
+        args=(
+          audit
+          --root "${{ inputs.root }}"
+          --profile "${{ inputs.profile }}"
+          --fail-on "${{ inputs.fail-on }}"
+          --sarif-output "${{ inputs.sarif-output }}"
+          --budget-output "${{ inputs.budget-output }}"
+          --hotspots-output "${{ inputs.hotspots-output }}"
+          --action-plan-output "${{ inputs.action-plan-output }}"
           --budget-fail
+        )
+        if [ "${{ inputs.fast }}" = "true" ]; then args+=(--fast); fi
+        if [ -n "${{ inputs.baseline }}" ]; then args+=(--baseline "${{ inputs.baseline }}"); fi
+        if [ "${{ inputs.fail-on-new }}" = "true" ]; then args+=(--fail-on-new); fi
+        hyperdrive-auditor "${args[@]}"
     - name: Upload SARIF
       if: always() && inputs.upload-sarif == 'true'
       uses: github/codeql-action/upload-sarif@v3

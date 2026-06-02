@@ -50,6 +50,8 @@ export async function runGuidedMode(argv = []) {
 
     const action = await choose(rl, 'What do you want to do?', [
       { id: 'audit', label: 'Run an audit now' },
+      { id: 'critical', label: 'Triage critical findings fast' },
+      { id: 'baseline', label: 'Create or use a quality baseline' },
       { id: 'init', label: 'Install Hyperdrive into this repo' },
       { id: 'doctor', label: 'Verify Hyperdrive installation' },
       { id: 'fix', label: 'Plan safe fixes / codemods' },
@@ -61,8 +63,10 @@ export async function runGuidedMode(argv = []) {
       console.log('\nRecommended enterprise workflow:');
       console.log('  1. hyperdrive-auditor init --root . --ci github --sarif --budgets --yes');
       console.log('  2. hyperdrive-auditor doctor --root .');
-      console.log('  3. hyperdrive-auditor audit --root . --profile ci --fail-on high --sarif-output hyperdrive.sarif --budget-output hyperdrive-budget.json --budget-fail');
-      console.log('  4. hyperdrive-auditor fix --root . --fix-dry-run --fix-report-output hyperdrive-fix-report.json --no-fail');
+      console.log('  3. hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --fast --no-fail');
+      console.log('  4. hyperdrive-auditor audit --root . --write-baseline hyperdrive-baseline.json --no-fail');
+      console.log('  5. hyperdrive-auditor audit --root . --baseline hyperdrive-baseline.json --fail-on-new --fail-on high');
+      console.log('  6. hyperdrive-auditor fix --root . --fix-dry-run --fix-report-output hyperdrive-fix-report.json --no-fail');
       return { exitCode: 0 };
     }
 
@@ -85,6 +89,23 @@ export async function runGuidedMode(argv = []) {
     }
 
     const root = await ask(rl, 'Repository root', process.cwd());
+
+
+    if (action.id === 'critical') {
+      const fast = await ask(rl, 'Use fast mode? yes/no', 'yes');
+      const args = ['--root', root, '--profile', 'ci', '--critical-only', '--summary-only', '--hotspots-output', 'hyperdrive-hotspots.json', '--action-plan-output', 'hyperdrive-critical-plan.json', '--no-fail'];
+      if (!fast.toLowerCase().startsWith('n')) args.push('--fast');
+      return runAuditCommand(args);
+    }
+
+    if (action.id === 'baseline') {
+      const mode = await choose(rl, 'Baseline workflow', [
+        { id: 'write', label: 'Create baseline from current findings' },
+        { id: 'compare', label: 'Fail only on new findings relative to baseline' },
+      ]);
+      if (mode.id === 'write') return runAuditCommand(['--root', root, '--profile', 'ci', '--write-baseline', 'hyperdrive-baseline.json', '--no-fail']);
+      return runAuditCommand(['--root', root, '--profile', 'ci', '--baseline', 'hyperdrive-baseline.json', '--fail-on-new', '--fail-on', 'high']);
+    }
 
     if (action.id === 'init') {
       const pm = await ask(rl, 'Package manager: auto, bun, pnpm, yarn, npm', 'auto');

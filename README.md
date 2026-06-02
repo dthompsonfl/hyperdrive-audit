@@ -2,6 +2,25 @@
 
 Hyperdrive Auditor is a guided, publish-ready CLI for auditing modern TypeScript monorepos, with a strong focus on Next.js 16+, React 19+, Prisma 7+, Turborepo 2+, runtime-boundary safety, security, dependency hygiene, CI output, graph budgets, SARIF, and guarded safe fixes.
 
+
+### Critical-first triage for large repos
+
+When a repo has hundreds of critical boundary findings, start with grouped root causes instead of raw logs:
+
+```bash
+hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --no-fail
+hyperdrive-auditor audit --root . --profile ci --hotspots-output hyperdrive-hotspots.json --no-fail
+```
+
+Useful large-repo controls:
+
+```bash
+hyperdrive-auditor audit --root . --max-graph-depth 20 --max-findings-per-severity 25
+hyperdrive-auditor audit --root . --all-findings --format markdown --output hyperdrive-report.md --no-fail
+```
+
+Pretty output is intentionally capped by default so CI logs do not become unusable. JSON and Markdown retain complete finding data unless you choose a narrower `--include`/`--exclude` scope.
+
 ## What it does
 
 - Scans Turbo/Next/React/Prisma TypeScript repositories.
@@ -228,10 +247,10 @@ Change `publishConfig.access` to `public` if publishing to the public npm regist
 When testing a packed tarball from a local clone, always prefix relative paths with `./` or use an absolute path.
 
 ```bash
-npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz
+npm install -D ./hyperdrive-audit/vantus-hyperdrive-auditor-8.0.7.tgz
 ```
 
-Do not run `npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.5.tgz`; npm may treat that as a GitHub shorthand package spec instead of a local file.
+Do not run `npm install hyperdrive-audit/vantus-hyperdrive-auditor-8.0.7.tgz`; npm may treat that as a GitHub shorthand package spec instead of a local file.
 
 ## Large repository memory guardrails
 
@@ -261,3 +280,25 @@ For deep type-aware audits, run focused slices:
 hyperdrive-auditor --root . --include apps/web --max-type-aware-files 5000
 hyperdrive-auditor --root . --include packages/db --max-type-aware-files 3000
 ```
+
+
+## Critical triage, baselines, and fast mode
+
+Hyperdrive is designed for large existing repos where a first audit can reveal hundreds of legacy findings. Use the critical triage and baseline workflow to make the output actionable instead of noisy.
+
+```bash
+# Fast critical-only triage for large repos
+npx hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --fast --no-fail
+
+# Export grouped root-cause hotspots and remediation workstreams
+npx hyperdrive-auditor audit --root . --profile ci --critical-only --hotspots-output hyperdrive-hotspots.json --action-plan-output hyperdrive-critical-plan.json --no-fail
+
+# Adopt Hyperdrive without blocking on existing debt
+npx hyperdrive-auditor audit --root . --profile ci --write-baseline hyperdrive-baseline.json --no-fail
+npx hyperdrive-auditor audit --root . --profile ci --baseline hyperdrive-baseline.json --fail-on-new --fail-on high
+
+# Show only new findings relative to the baseline
+npx hyperdrive-auditor audit --root . --profile ci --baseline hyperdrive-baseline.json --new-only --format markdown --output hyperdrive-new-findings.md --no-fail
+```
+
+Critical reports are grouped into workstreams such as sealing server environment access, removing Prisma/server imports from client graphs, splitting high-fanout server action sinks, and separating mixed-runtime shared modules. JSON reports include `criticalInsights`, `baseline`, and `timings` so CI dashboards can track progress over time.

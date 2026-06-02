@@ -4,7 +4,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const VERSION = '8.0.5';
+const VERSION = '8.0.7';
 const moduleRequire = createRequire(import.meta.url);
 
 const SEVERITY_ORDER = {
@@ -59,6 +59,16 @@ const DEFAULT_MAX_INDEXED_FILES = 25000;
 const DEFAULT_MAX_TYPE_AWARE_FILES = 1200;
 const DEFAULT_MAX_TEXT_CACHE_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_TEXT_CACHE_ENTRY_BYTES = 128 * 1024;
+const DEFAULT_MAX_GRAPH_DEPTH = 30;
+const DEFAULT_PRETTY_MAX_FINDINGS_PER_SEVERITY = 50;
+const CRITICAL_RULE_ORDER = [
+  'server-env-used-in-client-graph',
+  'prisma-client-imported-in-client-component',
+  'server-module-in-client',
+  'client-graph-imports-server-code',
+  'server-runtime-imports-client-code',
+  'shared-module-crosses-client-server-boundary',
+];
 
 const TEXT_EXTENSIONS = new Set([
   '.js',
@@ -168,6 +178,18 @@ function parseArgs(argv) {
     maxIndexedFiles: DEFAULT_MAX_INDEXED_FILES,
     maxTypeAwareFiles: DEFAULT_MAX_TYPE_AWARE_FILES,
     maxTextCacheBytes: DEFAULT_MAX_TEXT_CACHE_BYTES,
+    maxGraphDepth: DEFAULT_MAX_GRAPH_DEPTH,
+    maxFindingsPerSeverity: DEFAULT_PRETTY_MAX_FINDINGS_PER_SEVERITY,
+    allFindings: false,
+    summaryOnly: false,
+    criticalOnly: false,
+    fast: false,
+    hotspotsOutput: null,
+    actionPlanOutput: null,
+    baselinePath: null,
+    writeBaseline: null,
+    failOnNew: false,
+    newOnly: false,
     include: [],
     exclude: [],
     strict: false,
@@ -228,6 +250,49 @@ function parseArgs(argv) {
         break;
       case '--max-text-cache-mb':
         options.maxTextCacheBytes = Number(argv[++index] || 32) * 1024 * 1024;
+        break;
+      case '--max-graph-depth':
+        options.maxGraphDepth = Number(argv[++index] || options.maxGraphDepth);
+        break;
+      case '--max-findings-per-severity':
+        options.maxFindingsPerSeverity = Number(argv[++index] || options.maxFindingsPerSeverity);
+        break;
+      case '--hotspots-output':
+        options.hotspotsOutput = argv[++index] || null;
+        break;
+      case '--action-plan-output':
+      case '--critical-plan-output':
+        options.actionPlanOutput = argv[++index] || null;
+        break;
+      case '--baseline':
+        options.baselinePath = argv[++index] || null;
+        break;
+      case '--write-baseline':
+        options.writeBaseline = argv[++index] || 'hyperdrive-baseline.json';
+        break;
+      case '--fail-on-new':
+        options.failOnNew = true;
+        break;
+      case '--new-only':
+        options.newOnly = true;
+        break;
+      case '--all-findings':
+        options.allFindings = true;
+        break;
+      case '--summary-only':
+        options.summaryOnly = true;
+        break;
+      case '--critical-only':
+      case '--only-critical':
+        options.criticalOnly = true;
+        options.minSeverity = 'critical';
+        break;
+      case '--fast':
+      case '--quick':
+        options.fast = true;
+        options.typeAware = false;
+        options.maxGraphDepth = Math.min(Number(options.maxGraphDepth || DEFAULT_MAX_GRAPH_DEPTH), 14);
+        options.maxTextCacheBytes = Math.min(Number(options.maxTextCacheBytes || DEFAULT_MAX_TEXT_CACHE_BYTES), 16 * 1024 * 1024);
         break;
       case '--include':
         options.include.push(argv[++index] || '');
@@ -377,6 +442,22 @@ Options:
   --fail-on <severity>      never | info | low | medium | high | critical. Defaults to high.
   --min-severity <severity> Hide findings below severity. Defaults to info.
   --max-file-size-kb <n>    Skip very large files. Defaults to 768.
+  --max-indexed-files <n>   Hard cap indexed files for huge repos. Defaults to 25000.
+  --max-type-aware-files <n>
+                            Skip TypeChecker mode above this file count. Defaults to 1200.
+  --max-graph-depth <n>     Runtime graph traversal depth. Defaults to 30.
+  --max-findings-per-severity <n>
+                            Cap pretty output per severity. Defaults to 50.
+  --all-findings            Print every finding in pretty output.
+  --summary-only            Print only summary/root-cause triage in pretty output.
+  --critical-only           Shortcut for --min-severity critical.
+  --hotspots-output <path>  Write grouped root-cause hotspots JSON.
+  --action-plan-output <path> Write critical remediation workstreams JSON.
+  --baseline <path>         Compare findings against a saved baseline.
+  --write-baseline [path]   Save current findings as a baseline JSON.
+  --fail-on-new             Fail only when new findings meet --fail-on.
+  --new-only                Show only findings not present in --baseline.
+  --fast, --quick           Skip type-aware analysis and use a shallower graph for fast feedback.
   --include <fragment>      Restrict scan to paths containing this fragment. Repeatable.
   --exclude <fragment>      Exclude paths containing this fragment. Repeatable.
   --profile <profile>       balanced | strict | ci. Defaults to balanced.
@@ -414,6 +495,11 @@ Examples:
   hyperdrive-auditor --root .
   hyperdrive-auditor --format markdown --output hyperdrive-report.md
   hyperdrive-auditor --profile ci --fail-on medium
+  hyperdrive-auditor --critical-only --summary-only
+  hyperdrive-auditor --hotspots-output hyperdrive-hotspots.json
+  hyperdrive-auditor --action-plan-output hyperdrive-critical-plan.json
+  hyperdrive-auditor --write-baseline hyperdrive-baseline.json
+  hyperdrive-auditor --baseline hyperdrive-baseline.json --fail-on-new
 `);
 }
 
@@ -436,41 +522,57 @@ class HyperdriveAuditor {
     this.autofixSuggestions = [];
     this.codemodResult = null;
     this.budgetFailed = false;
+    this.reachabilityCache = new Map();
+    this.chainCache = new Map();
+    this.graphAdjacency = new Map();
+    this.graphReverseAdjacency = new Map();
+    this.timings = [];
   }
 
   run() {
-    this.assertRoot();
-    this.indexFiles(this.root);
-    this.buildPackageIndex();
-    this.buildAstGraph();
-    this.buildTypeAwareGraph();
+    this.step('assertRoot', () => this.assertRoot());
+    this.step('indexFiles', () => this.indexFiles(this.root));
+    this.step('buildPackageIndex', () => this.buildPackageIndex());
+    this.step('buildAstGraph', () => this.buildAstGraph());
+    this.step('buildTypeAwareGraph', () => this.buildTypeAwareGraph());
 
-    this.auditWorkspaceShape();
-    this.auditPackageManager();
-    this.auditPackageVersions();
-    this.auditTurborepoConfig();
-    this.auditTsConfig();
-    this.auditNextConfigs();
-    this.auditPackageScripts();
-    this.auditSourceFiles();
-    this.auditEnvironment();
-    this.auditDockerAndDeployment();
-    this.auditExpandedSecurity();
-    this.auditExpandedPackageChecks();
-    this.auditAstImportGraph();
-    this.auditTypeAwareGraph();
-    this.auditDependencyManifests();
-    this.auditNextRouteRuntimeGraph();
-    this.auditServerClientMarkers();
-    this.auditPrisma();
-    this.auditExpandedPrisma();
-    this.auditTailwindAndShadcn();
-    this.auditCiAndRepoQuality();
-    this.auditLockfileStrategy();
-    this.runCodemods();
-    this.writeOptionalArtifacts();
+    this.step('auditWorkspaceShape', () => this.auditWorkspaceShape());
+    this.step('auditPackageManager', () => this.auditPackageManager());
+    this.step('auditPackageVersions', () => this.auditPackageVersions());
+    this.step('auditTurborepoConfig', () => this.auditTurborepoConfig());
+    this.step('auditTsConfig', () => this.auditTsConfig());
+    this.step('auditNextConfigs', () => this.auditNextConfigs());
+    this.step('auditPackageScripts', () => this.auditPackageScripts());
+    this.step('auditSourceFiles', () => this.auditSourceFiles());
+    this.step('auditEnvironment', () => this.auditEnvironment());
+    this.step('auditDockerAndDeployment', () => this.auditDockerAndDeployment());
+    this.step('auditExpandedSecurity', () => this.auditExpandedSecurity());
+    this.step('auditExpandedPackageChecks', () => this.auditExpandedPackageChecks());
+    this.step('auditAstImportGraph', () => this.auditAstImportGraph());
+    this.step('auditTypeAwareGraph', () => this.auditTypeAwareGraph());
+    this.step('auditDependencyManifests', () => this.auditDependencyManifests());
+    this.step('auditNextRouteRuntimeGraph', () => this.auditNextRouteRuntimeGraph());
+    this.step('auditServerClientMarkers', () => this.auditServerClientMarkers());
+    this.step('auditPrisma', () => this.auditPrisma());
+    this.step('auditExpandedPrisma', () => this.auditExpandedPrisma());
+    this.step('auditTailwindAndShadcn', () => this.auditTailwindAndShadcn());
+    this.step('auditCiAndRepoQuality', () => this.auditCiAndRepoQuality());
+    this.step('auditLockfileStrategy', () => this.auditLockfileStrategy());
+    this.step('runCodemods', () => this.runCodemods());
+    this.step('writeOptionalArtifacts', () => this.writeOptionalArtifacts());
 
     return this.getVisibleFindings();
+  }
+
+  step(name, fn) {
+    const started = process.hrtime.bigint();
+    try {
+      return fn();
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+      if (!this.timings) this.timings = [];
+      this.timings.push({ name, durationMs: Math.round(durationMs * 100) / 100 });
+    }
   }
 
   assertRoot() {
@@ -725,6 +827,7 @@ class HyperdriveAuditor {
     }
 
     this.astGraph = { nodes, edges, sourceFileCount: sourceFiles.length };
+    this.prepareRuntimeGraphIndexes();
   }
 
 
@@ -809,6 +912,25 @@ class HyperdriveAuditor {
     }
 
     this.astGraph = { nodes, edges, sourceFileCount: sourceFiles.length, fallback: true };
+    this.prepareRuntimeGraphIndexes();
+  }
+
+
+  prepareRuntimeGraphIndexes() {
+    this.graphAdjacency = new Map();
+    this.graphReverseAdjacency = new Map();
+    this.reachabilityCache = new Map();
+    this.chainCache = new Map();
+    if (!this.astGraph?.nodes) return;
+    for (const [rel, node] of this.astGraph.nodes.entries()) {
+      const children = [...(node.internalImports || [])].filter((child) => this.astGraph.nodes.has(child));
+      this.graphAdjacency.set(rel, children);
+      for (const child of children) {
+        const parents = this.graphReverseAdjacency.get(child) || [];
+        parents.push(rel);
+        this.graphReverseAdjacency.set(child, parents);
+      }
+    }
   }
 
   getTextDirectives(content) {
@@ -2833,21 +2955,25 @@ class HyperdriveAuditor {
     const nodes = this.astGraph.nodes;
     const clientRoots = [...nodes.values()].filter((node) => node.directives.has('use client'));
     const serverRoots = [...nodes.values()].filter((node) => this.isServerRuntimeRoot(node));
+    const graphDepth = Number(this.options.maxGraphDepth || DEFAULT_MAX_GRAPH_DEPTH);
+    const serverTainted = new Set([...nodes.values()].filter((node) => this.isServerTaintedNode(node)).map((node) => node.rel));
+    const clientTainted = new Set([...nodes.values()].filter((node) => this.isClientTaintedNode(node)).map((node) => node.rel));
+    const heavyTainted = new Set([...nodes.values()].filter((node) => node.heavyClientImports?.size > 0).map((node) => node.rel));
 
     const clientReachable = new Set();
     for (const root of clientRoots) {
-      const reachable = this.collectReachableRuntimeNodes(root.rel, 30);
+      const reachable = this.collectReachableRuntimeNodes(root.rel, graphDepth);
       for (const rel of reachable) clientReachable.add(rel);
     }
 
     const serverReachable = new Set();
     for (const root of serverRoots) {
-      const reachable = this.collectReachableRuntimeNodes(root.rel, 30);
+      const reachable = this.collectReachableRuntimeNodes(root.rel, graphDepth);
       for (const rel of reachable) serverReachable.add(rel);
     }
 
     for (const root of clientRoots) {
-      const chain = this.findImportChain(root.rel, (node) => node.rel !== root.rel && this.isServerTaintedNode(node), 30);
+      const chain = this.findImportChainToSet(root.rel, serverTainted, graphDepth, 'server-tainted');
       if (chain) {
         const target = nodes.get(chain.at(-1));
         this.add({
@@ -2872,7 +2998,7 @@ class HyperdriveAuditor {
         });
       }
 
-      const heavyChain = this.findImportChain(root.rel, (node) => node.rel !== root.rel && node.heavyClientImports.size > 0, 30);
+      const heavyChain = this.findImportChainToSet(root.rel, heavyTainted, graphDepth, 'heavy-client');
       if (heavyChain) {
         const target = nodes.get(heavyChain.at(-1));
         this.add({
@@ -2898,7 +3024,7 @@ class HyperdriveAuditor {
     }
 
     for (const root of serverRoots) {
-      const chain = this.findImportChain(root.rel, (node) => node.rel !== root.rel && this.isClientTaintedNode(node), 30);
+      const chain = this.findImportChainToSet(root.rel, clientTainted, graphDepth, 'client-tainted');
       if (chain) {
         this.add({
           severity: this.isHardServerRuntimeRoot(root) ? 'critical' : 'high',
@@ -2995,33 +3121,60 @@ class HyperdriveAuditor {
     return this.isServerTaintedNode(node) || this.isClientTaintedNode(node);
   }
 
-  collectReachableRuntimeNodes(startRel, maxDepth = 30) {
+  collectReachableRuntimeNodes(startRel, maxDepth = DEFAULT_MAX_GRAPH_DEPTH) {
+    const cacheKey = `${startRel}:${maxDepth}`;
+    const cached = this.reachabilityCache.get(cacheKey);
+    if (cached) return cached;
     const visited = new Set();
     const queue = [{ rel: startRel, depth: 0 }];
-    while (queue.length > 0) {
-      const current = queue.shift();
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index];
       if (!current || visited.has(current.rel) || current.depth > maxDepth) continue;
       visited.add(current.rel);
-      const node = this.astGraph.nodes.get(current.rel);
-      if (!node) continue;
-      for (const nextRel of node.internalImports) {
+      const children = this.graphAdjacency?.get(current.rel) || [...(this.astGraph?.nodes?.get(current.rel)?.internalImports || [])];
+      for (const nextRel of children) {
         if (!visited.has(nextRel)) queue.push({ rel: nextRel, depth: current.depth + 1 });
       }
     }
+    this.reachabilityCache.set(cacheKey, visited);
     return visited;
   }
 
-  findImportChain(startRel, predicate, maxDepth = 30) {
+  findImportChainToSet(startRel, targetSet, maxDepth = DEFAULT_MAX_GRAPH_DEPTH, label = 'target') {
+    if (!targetSet || targetSet.size === 0) return null;
+    const cacheKey = `${label}:${startRel}:${maxDepth}:${targetSet.size}`;
+    if (this.chainCache.has(cacheKey)) return this.chainCache.get(cacheKey);
     const queue = [{ rel: startRel, chain: [startRel], depth: 0 }];
     const visited = new Set();
-    while (queue.length > 0) {
-      const current = queue.shift();
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index];
+      if (!current || visited.has(current.rel) || current.depth > maxDepth) continue;
+      visited.add(current.rel);
+      if (current.rel !== startRel && targetSet.has(current.rel)) {
+        this.chainCache.set(cacheKey, current.chain);
+        return current.chain;
+      }
+      const children = this.graphAdjacency?.get(current.rel) || [...(this.astGraph?.nodes?.get(current.rel)?.internalImports || [])];
+      for (const nextRel of children) {
+        if (!visited.has(nextRel)) queue.push({ rel: nextRel, chain: [...current.chain, nextRel], depth: current.depth + 1 });
+      }
+    }
+    this.chainCache.set(cacheKey, null);
+    return null;
+  }
+
+  findImportChain(startRel, predicate, maxDepth = DEFAULT_MAX_GRAPH_DEPTH) {
+    const queue = [{ rel: startRel, chain: [startRel], depth: 0 }];
+    const visited = new Set();
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index];
       if (!current || visited.has(current.rel) || current.depth > maxDepth) continue;
       visited.add(current.rel);
       const node = this.astGraph.nodes.get(current.rel);
       if (!node) continue;
       if (predicate(node, current.chain)) return current.chain;
-      for (const nextRel of node.internalImports) {
+      const children = this.graphAdjacency?.get(current.rel) || [...(node.internalImports || [])];
+      for (const nextRel of children) {
         if (!visited.has(nextRel)) queue.push({ rel: nextRel, chain: [...current.chain, nextRel], depth: current.depth + 1 });
       }
     }
@@ -3475,14 +3628,9 @@ class HyperdriveAuditor {
     const reachable = new Set();
     if (!this.astGraph) return reachable;
     const clientEntries = [...this.astGraph.nodes.values()].filter((node) => node.directives?.has?.('use client')).map((node) => node.rel);
-    const stack = [...clientEntries];
-    while (stack.length > 0) {
-      const rel = stack.pop();
-      if (!rel || reachable.has(rel)) continue;
-      reachable.add(rel);
-      const node = this.astGraph.nodes.get(rel);
-      if (!node) continue;
-      for (const child of node.internalImports || []) stack.push(child);
+    const maxDepth = Number(this.options.maxGraphDepth || DEFAULT_MAX_GRAPH_DEPTH);
+    for (const entry of clientEntries) {
+      for (const rel of this.collectReachableRuntimeNodes(entry, maxDepth)) reachable.add(rel);
     }
     return reachable;
   }
@@ -3713,6 +3861,9 @@ class HyperdriveAuditor {
     const override = this.options.ruleSeverities?.[finding.rule];
     const severity = normalizeSeverity(override || finding.severity || 'low');
     if (severity === 'off') return;
+    const minSeverity = SEVERITY_ORDER[this.options.minSeverity ?? 'info'];
+    const severityValue = SEVERITY_ORDER[severity] ?? 0;
+    if (!this.options.codemod && !this.options.fix && severityValue < minSeverity) return;
     this.findings.push({
       severity,
       category: finding.category || 'general',
@@ -4364,7 +4515,262 @@ function singleLinePreview(value) {
   return String(value).replace(/\n/g, '\\n').slice(0, 500);
 }
 
-function renderPretty(findings, root) {
+function appBucket(file) {
+  if (!file) return 'repository';
+  const parts = String(file).split('/');
+  if (parts[0] === 'apps' && parts[1]) return `apps/${parts[1]}`;
+  if (parts[0] === 'packages' && parts[1]) return `packages/${parts[1]}`;
+  return parts[0] || 'repository';
+}
+
+function findingId(finding) {
+  return `${finding.category}/${finding.rule}`;
+}
+
+function extractChainFromMessage(message) {
+  const text = String(message || '');
+  const marker = text.includes('code: ') ? 'code: ' : text.includes('graph reaches ') ? ': ' : null;
+  const raw = marker ? text.slice(text.indexOf(marker) + marker.length) : '';
+  if (!raw || !raw.includes(' -> ')) return [];
+  return raw.replace(/[.]$/, '').split(' -> ').map((part) => part.trim()).filter(Boolean);
+}
+
+function criticalRootCauseKey(finding) {
+  const id = findingId(finding);
+  const chain = extractChainFromMessage(finding.message);
+  if (id === 'env/server-env-used-in-client-graph') {
+    const env = String(finding.message || '').match(/Server-only env ([A-Z0-9_]+)/)?.[1] || 'server-env';
+    return `${id}:${env}`;
+  }
+  if (id === 'architecture/client-graph-imports-server-code' && chain.length > 1) return `${id}:${chain.at(-1)}`;
+  if (id === 'architecture/server-runtime-imports-client-code' && chain.length > 1) return `${id}:${chain.at(-1)}`;
+  if (id === 'architecture/shared-module-crosses-client-server-boundary') return `${id}:${finding.file || 'shared-module'}`;
+  if (id === 'prisma/prisma-client-imported-in-client-component' || id === 'react/server-module-in-client') return `${id}:${finding.file || 'prisma-client'}`;
+  return `${id}:${finding.file || 'repository'}`;
+}
+
+function explainCriticalBucket(id) {
+  if (id === 'architecture/client-graph-imports-server-code') return 'Client entries transitively reach server-only actions, env, database, or Node-only code.';
+  if (id === 'architecture/shared-module-crosses-client-server-boundary') return 'A module is imported by both client and server graphs while containing environment-specific behavior.';
+  if (id === 'env/server-env-used-in-client-graph') return 'Server-only environment variables are reachable from a client import graph.';
+  if (id === 'prisma/prisma-client-imported-in-client-component') return 'Client code imports Prisma server output instead of serializable DTOs or type-only browser-safe types.';
+  if (id === 'react/server-module-in-client') return 'Client code directly imports a known server-only dependency.';
+  if (id === 'architecture/server-runtime-imports-client-code') return 'Server runtime code imports a client-only module, usually via a shared utility with browser behavior.';
+  return 'Critical finding requires manual review.';
+}
+
+function buildCriticalInsights(findings) {
+  const critical = findings.filter((finding) => finding.severity === 'critical');
+  const byRule = new Map();
+  const byApp = new Map();
+  const rootCauses = new Map();
+
+  for (const finding of critical) {
+    const id = findingId(finding);
+    byRule.set(id, (byRule.get(id) || 0) + 1);
+    byApp.set(appBucket(finding.file), (byApp.get(appBucket(finding.file)) || 0) + 1);
+    const key = criticalRootCauseKey(finding);
+    const item = rootCauses.get(key) || { key, rule: id, count: 0, files: new Set(), examples: [], explanation: explainCriticalBucket(id) };
+    item.count += 1;
+    if (finding.file) item.files.add(finding.file);
+    if (item.examples.length < 5) item.examples.push({ file: finding.file || null, message: finding.message, fix: finding.fix || null, autofix: finding.autofix || null });
+    rootCauses.set(key, item);
+  }
+
+  const topRules = [...byRule.entries()].sort((a, b) => b[1] - a[1]).map(([rule, count]) => ({ rule, count, explanation: explainCriticalBucket(rule) }));
+  const topApps = [...byApp.entries()].sort((a, b) => b[1] - a[1]).map(([app, count]) => ({ app, count }));
+  const hotspots = [...rootCauses.values()]
+    .map((item) => ({ ...item, files: [...item.files].slice(0, 25) }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+
+  const plan = [];
+  if (topRules.some((item) => item.rule === 'env/server-env-used-in-client-graph')) plan.push('Seal env leaks first: move process.env access to server-only env modules and stop importing those modules from client graphs.');
+  if (topRules.some((item) => item.rule === 'prisma/prisma-client-imported-in-client-component' || item.rule === 'react/server-module-in-client')) plan.push('Remove Prisma/server dependency imports from Client Components; pass DTOs or type-only browser-safe types instead.');
+  if (topRules.some((item) => item.rule === 'architecture/client-graph-imports-server-code')) plan.push('Fix high-fanout server action sinks next. One action module split can remove dozens of client graph findings.');
+  if (topRules.some((item) => item.rule === 'architecture/shared-module-crosses-client-server-boundary')) plan.push('Split shared mixed-runtime utilities into .server/.client/.types modules.');
+  if (topRules.some((item) => item.rule === 'architecture/server-runtime-imports-client-code')) plan.push('Audit server runtime imports of shared utilities; move browser-only behavior behind client files.');
+
+  const visibleHotspots = hotspots.slice(0, 50);
+  const workstreams = buildCriticalWorkstreams(visibleHotspots, topRules);
+  const commands = buildCriticalCommands();
+  return {
+    totalCritical: critical.length,
+    topRules,
+    topApps,
+    hotspots: visibleHotspots,
+    workstreams,
+    commands,
+    plan,
+  };
+}
+
+function buildCriticalWorkstreams(hotspots, topRules) {
+  const hasRule = (rule) => topRules.some((item) => item.rule === rule || item.rule.endsWith(`/${rule}`));
+  const streams = [];
+  if (hasRule('env/server-env-used-in-client-graph')) {
+    streams.push({
+      id: 'seal-server-env',
+      title: 'Seal server environment access',
+      priority: 1,
+      why: 'Server secrets reachable from client graphs are the highest security risk and often explain many architecture findings.',
+      steps: [
+        'Create server-only env modules that import "server-only" and validate process.env once.',
+        'Move secret reads out of action/ui/shared files into those server-only env modules.',
+        'Pass only serializable public DTO fields to Client Components.',
+        'Re-run with --critical-only --summary-only after each app package.',
+      ],
+      command: 'npx hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --no-fail',
+    });
+  }
+  if (hasRule('prisma/prisma-client-imported-in-client-component') || hasRule('react/server-module-in-client')) {
+    streams.push({
+      id: 'remove-prisma-from-client',
+      title: 'Remove Prisma/server imports from client graphs',
+      priority: 2,
+      why: 'Prisma and Node/server modules in Client Components can break builds, leak implementation details, and bloat client bundles.',
+      steps: [
+        'Replace Client Component Prisma imports with DTO types or browser-safe generated type-only imports.',
+        'Fetch data in a Server Component, route handler, or validated Server Action.',
+        'Pass DTOs into client leaves as serializable props.',
+      ],
+      command: 'npx hyperdrive-auditor audit --root . --include apps/admin --profile ci --critical-only --no-fail',
+    });
+  }
+  if (hasRule('architecture/client-graph-imports-server-code')) {
+    streams.push({
+      id: 'split-high-fanout-actions',
+      title: 'Split high-fanout server action sinks',
+      priority: 3,
+      why: 'One server action module imported by many Client Components can generate dozens of critical findings.',
+      steps: [
+        'Start with the top hotspot target modules from hyperdrive-hotspots.json.',
+        'Split each into .server.ts, .actions.ts, and .types.ts.',
+        'Keep Client Components importing only types/DTOs or receiving actions through supported boundaries.',
+      ],
+      command: 'npx hyperdrive-auditor audit --root . --hotspots-output hyperdrive-hotspots.json --critical-only --no-fail',
+    });
+  }
+  if (hasRule('architecture/shared-module-crosses-client-server-boundary')) {
+    streams.push({
+      id: 'split-mixed-runtime-shared-modules',
+      title: 'Split mixed runtime shared modules',
+      priority: 4,
+      why: 'Shared modules must be environment-neutral. Mixed server/client modules are root causes for repeated boundary leaks.',
+      steps: [
+        'Create .types.ts for DTOs/constants/schemas safe in both runtimes.',
+        'Move Node, database, headers, cookies, and process.env usage to .server.ts.',
+        'Move hooks, browser APIs, and DOM behavior to .client.tsx or client-only utilities.',
+      ],
+      command: 'npx hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --no-fail',
+    });
+  }
+  if (streams.length === 0 && hotspots.length > 0) {
+    streams.push({ id: 'review-critical-hotspots', title: 'Review critical hotspots', priority: 1, why: 'Critical findings exist but do not match a built-in workstream.', steps: ['Open hyperdrive-hotspots.json and fix highest fanout targets first.'], command: 'npx hyperdrive-auditor audit --root . --hotspots-output hyperdrive-hotspots.json --no-fail' });
+  }
+  return streams.sort((a, b) => a.priority - b.priority);
+}
+
+function buildCriticalCommands() {
+  return [
+    { title: 'Fast critical triage', command: 'npx hyperdrive-auditor audit --root . --profile ci --critical-only --summary-only --fast --no-fail' },
+    { title: 'Write hotspot artifact', command: 'npx hyperdrive-auditor audit --root . --profile ci --critical-only --hotspots-output hyperdrive-hotspots.json --no-fail' },
+    { title: 'Write remediation plan', command: 'npx hyperdrive-auditor audit --root . --profile ci --critical-only --action-plan-output hyperdrive-critical-plan.json --no-fail' },
+    { title: 'Create adoption baseline', command: 'npx hyperdrive-auditor audit --root . --profile ci --write-baseline hyperdrive-baseline.json --no-fail' },
+    { title: 'Fail only on new high/critical findings', command: 'npx hyperdrive-auditor audit --root . --profile ci --baseline hyperdrive-baseline.json --fail-on-new --fail-on high' },
+  ];
+}
+
+function renderCriticalInsightsPretty(insights) {
+  if (!insights?.totalCritical) return '';
+  const lines = [];
+  lines.push(`${ANSI.red}${ANSI.bold}Critical root-cause triage${ANSI.reset}`);
+  lines.push(`${insights.totalCritical} critical findings grouped into ${insights.hotspots.length} top root-cause hotspots.`);
+  if (insights.topRules.length) {
+    lines.push('Top critical rule families:');
+    for (const item of insights.topRules.slice(0, 8)) lines.push(`  - ${item.rule}: ${item.count} (${item.explanation})`);
+  }
+  if (insights.topApps.length) {
+    lines.push('Most affected areas:');
+    for (const item of insights.topApps.slice(0, 8)) lines.push(`  - ${item.app}: ${item.count}`);
+  }
+  if (insights.hotspots.length) {
+    lines.push('Highest leverage hotspots:');
+    for (const item of insights.hotspots.slice(0, 10)) {
+      const target = item.key.split(':').slice(1).join(':') || item.key;
+      lines.push(`  - ${item.rule}: ${item.count}x at ${target}`);
+      for (const example of item.examples.slice(0, 2)) if (example.file) lines.push(`      e.g. ${example.file}`);
+    }
+  }
+  if (insights.workstreams?.length) {
+    lines.push('Remediation workstreams:');
+    insights.workstreams.slice(0, 5).forEach((stream, index) => lines.push(`  ${index + 1}. ${stream.title} - ${stream.why}`));
+  }
+  if (insights.commands?.length) {
+    lines.push('Useful commands:');
+    for (const item of insights.commands.slice(0, 3)) lines.push(`  - ${item.command}`);
+  }
+  if (insights.plan.length) {
+    lines.push('Recommended critical-first sequence:');
+    insights.plan.forEach((step, index) => lines.push(`  ${index + 1}. ${step}`));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function renderCriticalInsightsMarkdown(insights) {
+  if (!insights?.totalCritical) return '';
+  const lines = ['## Critical root-cause triage', ''];
+  lines.push(`${insights.totalCritical} critical findings are grouped below by rule family, app/package, and root-cause hotspot.`);
+  lines.push('');
+  lines.push('### Top critical rule families');
+  lines.push('');
+  lines.push('| Rule | Count | Meaning |');
+  lines.push('|---|---:|---|');
+  for (const item of insights.topRules.slice(0, 12)) lines.push(`| \`${item.rule}\` | ${item.count} | ${item.explanation} |`);
+  lines.push('');
+  lines.push('### Most affected areas');
+  lines.push('');
+  lines.push('| Area | Critical findings |');
+  lines.push('|---|---:|');
+  for (const item of insights.topApps.slice(0, 12)) lines.push(`| \`${item.app}\` | ${item.count} |`);
+  lines.push('');
+  lines.push('### Highest leverage hotspots');
+  lines.push('');
+  for (const item of insights.hotspots.slice(0, 20)) {
+    const target = item.key.split(':').slice(1).join(':') || item.key;
+    lines.push(`- **${item.count}x** \`${item.rule}\` at \`${target}\``);
+    for (const example of item.examples.slice(0, 3)) if (example.file) lines.push(`  - Example: \`${example.file}\``);
+  }
+  if (insights.workstreams?.length) {
+    lines.push('');
+    lines.push('### Remediation workstreams');
+    lines.push('');
+    insights.workstreams.forEach((stream, index) => {
+      lines.push(`#### ${index + 1}. ${stream.title}`);
+      lines.push('');
+      lines.push(stream.why);
+      lines.push('');
+      for (const step of stream.steps) lines.push(`- ${step}`);
+      if (stream.command) lines.push(`- Command: \`${stream.command}\``);
+      lines.push('');
+    });
+  }
+  if (insights.commands?.length) {
+    lines.push('### Useful commands');
+    lines.push('');
+    for (const item of insights.commands) lines.push(`- **${item.title}:** \`${item.command}\``);
+    lines.push('');
+  }
+  if (insights.plan.length) {
+    lines.push('');
+    lines.push('### Critical-first remediation sequence');
+    lines.push('');
+    insights.plan.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
+  }
+  lines.push('');
+  return `${lines.join('\n')}\n`;
+}
+
+function renderPretty(findings, root, meta = {}) {
   if (findings.length === 0) {
     return `${ANSI.green}${ANSI.bold}Hyperdrive Audit: PASS${ANSI.reset}\nNo findings at the selected threshold.\n`;
   }
@@ -4373,6 +4779,21 @@ function renderPretty(findings, root) {
   lines.push(`${ANSI.bold}Hyperdrive Audit v${VERSION}${ANSI.reset}`);
   lines.push(`${ANSI.dim}${root}${ANSI.reset}`);
   lines.push('');
+  const insights = meta.criticalInsights || buildCriticalInsights(findings);
+  const renderedInsights = renderCriticalInsightsPretty(insights);
+  if (renderedInsights) {
+    lines.push(renderedInsights.trimEnd());
+    lines.push('');
+  }
+  if (meta.baseline?.enabled) {
+    lines.push(`${ANSI.bold}Baseline comparison${ANSI.reset}`);
+    lines.push(`Known: ${meta.baseline.knownCount}, New: ${meta.baseline.newCount}, Baseline size: ${meta.baseline.baselineCount}`);
+    lines.push('');
+  }
+  if (meta.summaryOnly) {
+    lines.push(summarize(findings));
+    return `${lines.join('\n')}\n`;
+  }
 
   const groups = groupBy(findings, (finding) => finding.severity);
   for (const severity of ['critical', 'high', 'medium', 'low', 'info']) {
@@ -4380,13 +4801,18 @@ function renderPretty(findings, root) {
     if (items.length === 0) continue;
     const color = severity === 'critical' ? ANSI.red : severity === 'high' ? ANSI.yellow : severity === 'medium' ? ANSI.cyan : ANSI.gray;
     lines.push(`${color}${severity.toUpperCase()} (${items.length})${ANSI.reset}`);
-    for (const item of items) {
+    const limit = meta.allFindings ? items.length : Number(meta.maxFindingsPerSeverity || DEFAULT_PRETTY_MAX_FINDINGS_PER_SEVERITY);
+    const visibleItems = items.slice(0, Math.max(0, limit));
+    for (const item of visibleItems) {
       const loc = item.file ? `${item.file}${item.line ? `:${item.line}${item.column ? `:${item.column}` : ''}` : ''}` : '';
       lines.push(`  - [${item.category}/${item.rule}] ${item.message}`);
       if (loc) lines.push(`    ${ANSI.dim}${loc}${ANSI.reset}`);
       if (item.evidence) lines.push(`    ${ANSI.dim}Evidence:${ANSI.reset} ${singleLinePreview(item.evidence)}`);
       if (item.fix) lines.push(`    ${ANSI.green}Fix:${ANSI.reset} ${item.fix}`);
       if (item.autofix?.title) lines.push(`    ${ANSI.cyan}Autofix suggestion:${ANSI.reset} ${item.autofix.title} (${item.autofix.kind || 'suggestion'}, confidence: ${item.autofix.confidence || 'unknown'})`);
+    }
+    if (visibleItems.length < items.length) {
+      lines.push(`    ${ANSI.dim}Showing ${visibleItems.length} of ${items.length}. Re-run with --all-findings or --format markdown/json for the full list.${ANSI.reset}`);
     }
     lines.push('');
   }
@@ -4412,6 +4838,20 @@ function renderMarkdown(findings, root, meta = {}) {
   lines.push('');
   lines.push(summarize(findings));
   lines.push('');
+  const insights = meta.criticalInsights || buildCriticalInsights(findings);
+  const insightsMd = renderCriticalInsightsMarkdown(insights);
+  if (insightsMd) {
+    lines.push(insightsMd.trimEnd());
+    lines.push('');
+  }
+  if (meta.baseline?.enabled) {
+    lines.push('## Baseline comparison');
+    lines.push('');
+    lines.push(`- Known findings: ${meta.baseline.knownCount}`);
+    lines.push(`- New findings: ${meta.baseline.newCount}`);
+    lines.push(`- Baseline fingerprints: ${meta.baseline.baselineCount}`);
+    lines.push('');
+  }
 
   if (findings.length === 0) {
     lines.push('No findings at the selected threshold.');
@@ -4485,6 +4925,8 @@ function renderJson(findings, root, meta = {}) {
     findings,
     artifacts: meta.artifacts || [],
     recommendations: meta.recommendations || [],
+    criticalInsights: meta.criticalInsights || buildCriticalInsights(findings),
+    baseline: meta.baseline || null,
     rules: meta.rules || [],
     config: meta.config || {},
     timings: meta.timings || {},
@@ -4567,6 +5009,66 @@ function summarize(findings) {
   return `Summary: ${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low, ${counts.info} info.`;
 }
 
+
+function findingFingerprint(finding) {
+  return [finding.category || 'general', finding.rule || 'unknown', finding.file || 'repository', finding.line || '', finding.column || '', normalizeFindingMessage(finding.message)].join('|');
+}
+
+function normalizeFindingMessage(message) {
+  return String(message || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+function buildBaselinePayload(findings, root) {
+  const entries = dedupeFindings(findings).map((finding) => ({
+    fingerprint: findingFingerprint(finding),
+    severity: finding.severity,
+    category: finding.category,
+    rule: finding.rule,
+    file: finding.file || null,
+    line: finding.line || null,
+    column: finding.column || null,
+    message: finding.message,
+  }));
+  return {
+    version: VERSION,
+    root,
+    generatedAt: new Date().toISOString(),
+    summary: countBySeverity(findings),
+    fingerprints: entries.map((entry) => entry.fingerprint),
+    entries,
+  };
+}
+
+function readBaselinePayload(path) {
+  if (!path) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    const fingerprints = new Set(Array.isArray(parsed.fingerprints) ? parsed.fingerprints : (parsed.entries || []).map((entry) => entry.fingerprint));
+    return { ...parsed, fingerprints };
+  } catch {
+    return null;
+  }
+}
+
+function compareBaseline(findings, baselinePayload) {
+  const baseline = baselinePayload?.fingerprints || new Set();
+  const newFindings = [];
+  const knownFindings = [];
+  for (const finding of findings) {
+    if (baseline.has(findingFingerprint(finding))) knownFindings.push(finding);
+    else newFindings.push(finding);
+  }
+  return {
+    enabled: Boolean(baselinePayload),
+    baselineCount: baseline.size || 0,
+    currentCount: findings.length,
+    knownCount: knownFindings.length,
+    newCount: newFindings.length,
+    newFindings,
+    knownFindings,
+  };
+}
+
 function shouldFail(findings, failOn) {
   if (failOn === 'never') return false;
   const threshold = SEVERITY_ORDER[failOn];
@@ -4605,4 +5107,4 @@ function main() {
   }
 }
 
-export { VERSION, SEVERITY_ORDER, HyperdriveAuditor, HyperdriveCodemodEngine, parseArgs, printHelp, renderPretty, renderMarkdown, renderJson, renderSarif, shouldFail, normalizeSeverity, countBySeverity, summarize, dedupeFindings };
+export { VERSION, SEVERITY_ORDER, HyperdriveAuditor, HyperdriveCodemodEngine, parseArgs, printHelp, renderPretty, renderMarkdown, renderJson, renderSarif, shouldFail, normalizeSeverity, countBySeverity, summarize, dedupeFindings, buildCriticalInsights, buildBaselinePayload, readBaselinePayload, compareBaseline, findingFingerprint };

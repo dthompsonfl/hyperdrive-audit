@@ -62,8 +62,12 @@ function scriptsFor(options) {
   const base = {
     'audit:performance': 'hyperdrive-auditor --root . --profile balanced',
     'audit:performance:ci': 'hyperdrive-auditor --root . --profile ci --fail-on high',
+    'audit:performance:critical': 'hyperdrive-auditor --root . --profile ci --critical-only --summary-only --fast --no-fail',
     'audit:performance:md': 'hyperdrive-auditor --root . --profile ci --format markdown --output hyperdrive-report.md',
     'audit:performance:graph': 'hyperdrive-auditor --root . --profile ci --graph-output hyperdrive-graph.json --type-report-output hyperdrive-type-report.json --fix-suggestions-output hyperdrive-fixes.json',
+    'audit:performance:hotspots': 'hyperdrive-auditor --root . --profile ci --hotspots-output hyperdrive-hotspots.json --action-plan-output hyperdrive-critical-plan.json --no-fail',
+    'audit:performance:baseline': 'hyperdrive-auditor --root . --profile ci --write-baseline hyperdrive-baseline.json --no-fail',
+    'audit:performance:new': 'hyperdrive-auditor --root . --profile ci --baseline hyperdrive-baseline.json --fail-on-new --fail-on high',
     'audit:performance:fixes': 'hyperdrive-auditor --root . --fix-dry-run --fix-report-output hyperdrive-fix-report.json --no-fail'
   };
   if (options.sarif) base['audit:performance:sarif'] = 'hyperdrive-auditor --root . --profile ci --sarif-output hyperdrive.sarif';
@@ -96,7 +100,9 @@ export async function runInit(argv) {
   let install = null;
   if (options.install) install = await installDependency(options.root, packageManager, options.packageName, { dryRun: options.dryRun });
   const nextSteps = [
-    `${packageManagerCommands(packageManager).run} audit:performance:ci`,
+    `${packageManagerCommands(packageManager).run} audit:performance:critical`,
+    `${packageManagerCommands(packageManager).run} audit:performance:baseline`,
+    `${packageManagerCommands(packageManager).run} audit:performance:new`,
     `${packageManagerCommands(packageManager).run} audit:performance:sarif`,
     `hyperdrive-auditor doctor --root ${options.root}`
   ];

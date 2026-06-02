@@ -43,4 +43,20 @@ run(['--root', join(root, 'env-missing-example'), '--fix-dry-run', '--fix-report
 assert(existsSync(fixPath), 'fix dry-run output missing');
 JSON.parse(readFileSync(fixPath, 'utf8'));
 
+
+const hotspotsPath = '/tmp/hyperdrive-fixture-hotspots.json';
+const actionPlanPath = '/tmp/hyperdrive-fixture-action-plan.json';
+run(['--root', join(root, 'next-client-imports-server'), '--critical-only', '--summary-only', '--fast', '--hotspots-output', hotspotsPath, '--action-plan-output', actionPlanPath, '--no-fail']);
+const hotspots = JSON.parse(readFileSync(hotspotsPath, 'utf8'));
+const actionPlan = JSON.parse(readFileSync(actionPlanPath, 'utf8'));
+assert(hotspots.criticalInsights?.totalCritical >= 1, 'hotspots output missing critical insights');
+assert(Array.isArray(actionPlan.workstreams), 'action plan output missing workstreams');
+
+const baselinePath = '/tmp/hyperdrive-fixture-baseline.json';
+run(['--root', join(root, 'next-client-imports-server'), '--write-baseline', baselinePath, '--no-fail']);
+assert(existsSync(baselinePath), 'baseline output missing');
+const baselineCompare = json(['--root', join(root, 'next-client-imports-server'), '--baseline', baselinePath, '--new-only']);
+assert(baselineCompare.baseline?.enabled, 'baseline comparison missing from JSON');
+assert(baselineCompare.baseline.newCount === 0, 'baseline comparison should have zero new findings');
+
 console.log('Fixture tests passed');

@@ -15,7 +15,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run audit:performance:ci
+      - run: bun run audit:performance:critical
+      - run: bun run audit:performance:hotspots
+      - run: bun run audit:performance:new
       - run: bun run audit:performance:sarif
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
