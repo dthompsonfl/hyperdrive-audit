@@ -4,7 +4,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const VERSION = '8.0.1';
+const VERSION = '8.0.2';
 const moduleRequire = createRequire(import.meta.url);
 
 const SEVERITY_ORDER = {
@@ -4231,6 +4231,17 @@ function renderMarkdown(findings, root, meta = {}) {
     }
   }
 
+  if (Array.isArray(meta.recommendations) && meta.recommendations.length > 0) {
+    lines.push('## Recommended next steps');
+    lines.push('');
+    for (const item of meta.recommendations) {
+      lines.push(`- **${item.title}**`);
+      if (item.command) lines.push(`  - Command: \`${item.command}\``);
+      if (item.reason) lines.push(`  - Reason: ${item.reason}`);
+    }
+    lines.push('');
+  }
+
   if (Array.isArray(meta.artifacts) && meta.artifacts.length > 0) {
     lines.push('## Machine-readable artifacts');
     lines.push('');
@@ -4255,6 +4266,7 @@ function renderJson(findings, root, meta = {}) {
     summary: countBySeverity(findings),
     findings,
     artifacts: meta.artifacts || [],
+    recommendations: meta.recommendations || [],
     rules: meta.rules || [],
     config: meta.config || {},
     timings: meta.timings || {},

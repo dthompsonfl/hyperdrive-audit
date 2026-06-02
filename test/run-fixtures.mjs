@@ -11,8 +11,11 @@ function hasRule(payload, rule) { return payload.findings.some((finding) => find
 
 assert(run(['--list-rules']).includes('client-graph-imports-server-code'), '--list-rules missing core rule');
 assert(run(['--explain-rule', 'client-graph-imports-server-code']).includes('client-graph-imports-server-code'), '--explain-rule failed');
+assert(run([]).includes('Start guided mode'), 'no-arg non-interactive help failed');
+assert(run(['guide']).includes('guided mode requires an interactive terminal'), 'guide non-interactive fallback failed');
 
 const clean = json(['--root', join(root, 'next-clean-app')]);
+assert(Array.isArray(clean.recommendations), 'JSON output missing recommendations array');
 assert(!clean.findings.some((f) => f.severity === 'critical'), 'clean fixture has critical findings');
 
 const clientServer = json(['--root', join(root, 'next-client-imports-server')]);

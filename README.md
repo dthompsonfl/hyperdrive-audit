@@ -1,15 +1,16 @@
 # Hyperdrive Auditor
 
-Hyperdrive Auditor is a publish-ready CLI for auditing modern TypeScript monorepos, with a strong focus on Next.js 16+, React 19+, Prisma 7+, Turborepo 2+, runtime-boundary safety, security, dependency hygiene, CI output, graph budgets, SARIF, and guarded safe fixes.
+Hyperdrive Auditor is a guided, publish-ready CLI for auditing modern TypeScript monorepos, with a strong focus on Next.js 16+, React 19+, Prisma 7+, Turborepo 2+, runtime-boundary safety, security, dependency hygiene, CI output, graph budgets, SARIF, and guarded safe fixes.
 
 ## What it does
 
 - Scans Turbo/Next/React/Prisma TypeScript repositories.
 - Builds import graphs and type-aware reports when TypeScript is available.
 - Detects client/server graph contamination, unsafe Server Actions, risky route handlers, Prisma and environment mistakes, package drift, Docker/CI issues, and dependency hygiene problems.
-- Emits human, JSON, Markdown, SARIF, graph, type-report, budget, and safe-fix artifacts.
+- Emits human, JSON, Markdown, SARIF, graph, type-report, budget, recommendation, and safe-fix artifacts.
 - Installs itself into host repos with `hyperdrive-auditor init`.
 - Verifies installation with `hyperdrive-auditor doctor`.
+- Starts an interactive guided command wizard when run without arguments in a terminal.
 
 ## What it does not do
 
@@ -41,6 +42,25 @@ pnpm exec hyperdrive-auditor init --preset next-turbo-prisma --ci github --sarif
 pnpm audit:performance:ci
 ```
 
+## Guided mode
+
+Run the CLI without arguments in an interactive terminal:
+
+```bash
+hyperdrive-auditor
+```
+
+The wizard asks what you want to do, then collects the missing inputs instead of failing. It can run audits, initialize a repo, verify installation, plan safe fixes, explain a rule, or print the recommended enterprise workflow.
+
+You can also start it explicitly:
+
+```bash
+hyperdrive-auditor guide
+hyperdrive-auditor --guided
+```
+
+In non-interactive shells, no-argument usage prints complete help and exits successfully.
+
 ## CLI
 
 ```bash
@@ -51,7 +71,7 @@ hyperdrive-auditor doctor --root .
 hyperdrive-auditor fix --root . --fix-rule value-import-used-only-as-type
 ```
 
-`audit` is the default command, so existing usage remains valid.
+`hyperdrive-auditor --root .` remains valid for backwards compatibility. `hyperdrive-auditor` with no arguments opens guided mode in a TTY and prints help in non-interactive environments.
 
 ## Init
 
@@ -111,7 +131,9 @@ Example:
 }
 ```
 
-## Reports and artifacts
+## Reports, recommendations, and artifacts
+
+Every audit can emit recommendations based on the findings. Pretty output prints recommended next commands. Markdown and JSON outputs include the same recommendation data.
 
 ```bash
 hyperdrive-auditor --root . --format markdown --output hyperdrive-report.md
@@ -187,7 +209,7 @@ jobs:
 
 ## Exit codes
 
-- `0`: success, or no findings at/above `--fail-on`.
+- `0`: success, no findings at/above `--fail-on`, help shown, or non-interactive no-argument help shown.
 - `1`: findings met/exceeded `--fail-on`, or doctor failed required checks.
 - `2`: fatal CLI/runtime error.
 

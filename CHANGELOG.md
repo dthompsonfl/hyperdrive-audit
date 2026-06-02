@@ -1,5 +1,13 @@
 # Changelog
 
+## 8.0.2 - Unreleased
+
+- Added interactive guided mode when `hyperdrive-auditor` is run without arguments in a terminal.
+- Added `hyperdrive-auditor guide` and `--guided` entry points.
+- Added audit recommendations to pretty, Markdown, and JSON outputs.
+- Expanded global help with enterprise workflows and artifact commands.
+
+
 ## 8.0.1 - Unreleased
 
 - Fixed package self-audit by adding source-package Hyperdrive config for CLI-package layout.
