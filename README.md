@@ -1,5 +1,7 @@
 # Hyperdrive Auditor
 
+**Verification:** [GitHub Quality workflow passed on November 2, 2026](https://github.com/dthompsonfl/hyperdrive-audit/actions/runs/41545228532) at commit `0847860d1`. This establishes the repository's configured checks at that revision, not benchmarked detection accuracy or end-user adoption.
+
 Hyperdrive Auditor is a guided, publish-ready CLI for auditing modern TypeScript monorepos, with a strong focus on Next.js 16+, React 19+, Prisma 7+, Turborepo 2+, runtime-boundary safety, security, dependency hygiene, CI output, graph budgets, SARIF, and guarded safe fixes.
 
 
